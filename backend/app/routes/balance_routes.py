@@ -59,3 +59,43 @@ def get_accounts():
         return jsonify({"error": "Failed to fetch accounts"}), 500
 
 
+# Route to update an account
+@balance_blueprint.route('/<int:account_id>', methods=['PUT'])
+@jwt_required()
+def update_account(account_id):
+    try:
+        user_id = get_jwt_identity()
+        data = request.get_json()
+
+        account = Balance.query.filter_by(id=account_id, user_id=user_id).first()
+        if not account:
+            return jsonify({"error": "Account not found"}), 404
+
+        # Update account details
+        account.account_type = data.get('account_type', account.account_type)
+        account.balance = data.get('balance', account.balance)
+        db.session.commit()
+
+        return jsonify({"message": "Account updated successfully"}), 200
+    except Exception as e:
+        print(f"Error in update_account: {e}")
+        return jsonify({"error": "Failed to update account"}), 500
+
+# Route to delete an account
+@balance_blueprint.route('/<int:account_id>', methods=['DELETE'])
+@jwt_required()
+def delete_account(account_id):
+    try:
+        user_id = get_jwt_identity()
+
+        account = Balance.query.filter_by(id=account_id, user_id=user_id).first()
+        if not account:
+            return jsonify({"error": "Account not found"}), 404
+
+        db.session.delete(account)
+        db.session.commit()
+
+        return jsonify({"message": "Account deleted successfully"}), 200
+    except Exception as e:
+        print(f"Error in delete_account: {e}")
+        return jsonify({"error": "Failed to delete account"}), 500
