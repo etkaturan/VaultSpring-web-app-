@@ -1,101 +1,121 @@
+import requests
 from flask import Blueprint, jsonify, request
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from app.models.balance_model import Balance
 from app import db
 
-# Define the blueprint
 balance_blueprint = Blueprint('balance_routes', __name__, url_prefix='/balances')
 
-# Route to add a new balance account
+# API for exchange rates
+EXCHANGE_API_URL = "https://open.er-api.com/v6/latest/USD"
+
+def fetch_exchange_rates():
+    """Fetch exchange rates from the API."""
+    try:
+        response = requests.get(EXCHANGE_API_URL)
+        response.raise_for_status()  # Raise error for bad HTTP responses
+        data = response.json()
+
+        if data["result"] == "success":
+            return data["rates"]
+        else:
+            print("API error:", data.get("error-type"))
+            return None
+    except Exception as e:
+        print(f"Error fetching exchange rates: {e}")
+        return None
+
+# Add a new balance
 @balance_blueprint.route('/add', methods=['POST'])
 @jwt_required()
 def add_account():
-    try:
-        user_id = get_jwt_identity()
-        data = request.get_json()
+    user_id = get_jwt_identity()
+    data = request.get_json()
 
-        # Extract account details
-        account_type = data.get('account_type')
-        balance = data.get('balance', 0.0)
+    account_type = data.get("account_type")
+    balance = data.get("balance", 0.0)
+    currency = data.get("currency", "USD")
 
-        # Validate inputs
-        if not account_type:
-            return jsonify({"error": "Account type is required"}), 400
+    if not account_type:
+        return jsonify({"error": "Account type is required"}), 400
 
-        # Create a new balance account
-        new_account = Balance(user_id=user_id, account_type=account_type, balance=balance)
-        db.session.add(new_account)
-        db.session.commit()
+    new_account = Balance(
+        user_id=user_id,
+        account_type=account_type,
+        balance=balance,
+        currency=currency
+    )
+    db.session.add(new_account)
+    db.session.commit()
 
-        return jsonify({"message": "Account added successfully"}), 201
-    except Exception as e:
-        print(f"Error in add_account: {e}")
-        return jsonify({"error": "Failed to add account"}), 500
+    return jsonify({"message": "Account added successfully"}), 201
 
-# Route to fetch all accounts for the logged-in user
+# Fetch all accounts and convert balances
 @balance_blueprint.route('/', methods=['GET'])
 @jwt_required()
 def get_accounts():
-    try:
-        # Debug: Log the Authorization header
-        print(f"Authorization Header: {request.headers.get('Authorization')}")
+    user_id = get_jwt_identity()
+    accounts = Balance.query.filter_by(user_id=user_id).all()
+    exchange_rates = fetch_exchange_rates()
 
-        # Decode the user ID from the token
-        user_id = get_jwt_identity()
-        print(f"User ID from Token: {user_id}")
+    if not exchange_rates:
+        return jsonify({"error": "Failed to fetch exchange rates"}), 500
 
-        # Fetch user accounts
-        accounts = Balance.query.filter_by(user_id=user_id).all()
+    result = []
+    for account in accounts:
+        converted_balances = {}
+        for currency in ["USD", "EUR", "KZT"]:  # Add more currencies as needed
+            if account.currency == currency:
+                converted_balances[currency] = account.balance
+            else:
+                try:
+                    converted_balances[currency] = round(
+                        (account.balance / exchange_rates[account.currency]) * exchange_rates[currency], 2
+                    )
+                except KeyError:
+                    converted_balances[currency] = "N/A"  # Handle missing rates
 
-        return jsonify([
-            {
-                "id": account.id,
-                "account_type": account.account_type,
-                "balance": account.balance
-            } for account in accounts
-        ]), 200
-    except Exception as e:
-        print(f"Error in get_accounts: {e}")
-        return jsonify({"error": "Failed to fetch accounts"}), 500
+        result.append({
+            "id": account.id,
+            "account_type": account.account_type,
+            "balance": account.balance,
+            "currency": account.currency,
+            "converted_balances": converted_balances,
+        })
 
+    return jsonify(result), 200
 
-# Route to update an account
+# Update balance account
 @balance_blueprint.route('/<int:account_id>', methods=['PUT'])
 @jwt_required()
 def update_account(account_id):
-    try:
-        user_id = get_jwt_identity()
-        data = request.get_json()
+    user_id = get_jwt_identity()
+    data = request.get_json()
 
-        account = Balance.query.filter_by(id=account_id, user_id=user_id).first()
-        if not account:
-            return jsonify({"error": "Account not found"}), 404
+    account = Balance.query.filter_by(id=account_id, user_id=user_id).first()
 
-        # Update account details
-        account.account_type = data.get('account_type', account.account_type)
-        account.balance = data.get('balance', account.balance)
-        db.session.commit()
+    if not account:
+        return jsonify({"error": "Account not found"}), 404
 
-        return jsonify({"message": "Account updated successfully"}), 200
-    except Exception as e:
-        print(f"Error in update_account: {e}")
-        return jsonify({"error": "Failed to update account"}), 500
+    account.account_type = data.get("account_type", account.account_type)
+    account.balance = data.get("balance", account.balance)
+    account.currency = data.get("currency", account.currency)
 
-# Route to delete an account
+    db.session.commit()
+    return jsonify({"message": "Account updated successfully"}), 200
+
+# Delete balance account
 @balance_blueprint.route('/<int:account_id>', methods=['DELETE'])
 @jwt_required()
 def delete_account(account_id):
-    try:
-        user_id = get_jwt_identity()
+    user_id = get_jwt_identity()
 
-        account = Balance.query.filter_by(id=account_id, user_id=user_id).first()
-        if not account:
-            return jsonify({"error": "Account not found"}), 404
+    account = Balance.query.filter_by(id=account_id, user_id=user_id).first()
 
-        db.session.delete(account)
-        db.session.commit()
+    if not account:
+        return jsonify({"error": "Account not found"}), 404
 
-        return jsonify({"message": "Account deleted successfully"}), 200
-    except Exception as e:
-        print(f"Error in delete_account: {e}")
-        return jsonify({"error": "Failed to delete account"}), 500
+    db.session.delete(account)
+    db.session.commit()
+
+    return jsonify({"message": "Account deleted successfully"}), 200
