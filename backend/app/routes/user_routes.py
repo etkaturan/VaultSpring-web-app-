@@ -42,8 +42,10 @@ def login_user():
     if not user or not user.check_password(password):
         return jsonify({"error": "Invalid credentials"}), 401
 
-    # Generate a valid token
-    token = create_access_token(identity=user.id)
+    # Generate the token
+    token = create_access_token(identity=str(user.id))
+    print(f"Generated Token: {token}")  # Print the token for debugging
+
     return jsonify({
         "access_token": token,
         "username": user.username

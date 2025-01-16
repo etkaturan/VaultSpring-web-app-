@@ -30,6 +30,8 @@ def fetch_exchange_rates():
 @jwt_required()
 def add_account():
     user_id = get_jwt_identity()
+    if not user_id:
+        return jsonify({"error": "Invalid token"}), 401
     data = request.get_json()
 
     account_type = data.get("account_type")
