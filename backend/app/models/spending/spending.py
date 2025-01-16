@@ -12,10 +12,8 @@ class Spending(db.Model):
     description = db.Column(db.String(255), nullable=True)
     date = db.Column(db.DateTime, default=datetime.utcnow)
     payment_method = db.Column(db.String(20), nullable=False)  # e.g., Cash, Card
-    account_id = db.Column(db.Integer, db.ForeignKey('balance.id'), nullable=False)
 
     user = db.relationship('User', backref=db.backref('spendings', lazy=True))
-    account = db.relationship('Balance', backref=db.backref('spendings', lazy=True))
     category = db.relationship('Category', backref=db.backref('spendings', lazy=True))
 
     def __repr__(self):

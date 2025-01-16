@@ -30,10 +30,12 @@ const DashboardPage = () => {
         {/* Existing Balance Block */}
         <BalanceBlock token={token} username={username} />
 
-        {/* Placeholder Blocks */}
+        {/* Other Blocks */}
         <TotalBalanceBlock />
         <IncomeBlock />
-        <SpendingsBlock />
+
+        {/* Spendings Block */}
+        <SpendingsBlock token={token} username={username} />
       </div>
     </div>
   );

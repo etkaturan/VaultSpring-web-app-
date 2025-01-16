@@ -19,8 +19,11 @@ def create_app():
     db.init_app(app)
     jwt.init_app(app)
     migrate.init_app(app, db)
-    CORS(app, resources={r"/*": {"origins": "http://localhost:5173"}}, supports_credentials=True)
-
+    CORS(app, resources={r"/*": {"origins": "http://localhost:5173"}}, 
+        supports_credentials=True, 
+        expose_headers=["Authorization"], 
+        allow_headers=["Content-Type", "Authorization", "Access-Control-Allow-Headers", "Access-Control-Allow-Origin", "Access-Control-Allow-Methods"])
+    
     # Import and register blueprints
     from app.routes.user_routes import user_blueprint
     app.register_blueprint(user_blueprint)

@@ -1,5 +1,6 @@
 import requests
 from flask import Blueprint, request, jsonify
+from flask_jwt_extended import jwt_required, get_jwt_identity
 from app import db
 from app.models.spending.spending import Spending
 from datetime import datetime
@@ -23,50 +24,64 @@ def get_or_create_category(name, parent_id=None):
     return category
 
 @spending_bp.route('/', methods=['POST'])
+@jwt_required()
 def add_spending():
-    data = request.json
+    try:
+        user_id = get_jwt_identity()  # Extract the logged-in user's ID
 
-    # Handle category creation
-    category_name = data['category']
-    subcategory_name = data.get('subcategory', None)
-    parent_category = get_or_create_category(category_name)
-    category = parent_category
+        # Parse request data
+        data = request.json
 
-    # If a subcategory is provided, create or get it
-    if subcategory_name:
-        category = get_or_create_category(subcategory_name, parent_id=parent_category.id)
+        # Validate required fields
+        category_id = data.get('category_id')
+        if not category_id:
+            return jsonify({"error": "'category_id' field is required"}), 400
 
-    # Create a new spending entry
-    spending = Spending(
-        user_id=data['user_id'],
-        category_id=category.id,
-        amount=data['amount'],
-        currency=data.get('currency', 'USD'),
-        description=data.get('description'),
-        date=data.get('date', datetime.utcnow()),
-        payment_method=data['payment_method'],
-        account_id=data['account_id']
-    )
-    db.session.add(spending)
-    db.session.commit()
+        amount = data.get('amount')
+        if amount is None or not isinstance(amount, (int, float)):
+            return jsonify({"error": "'amount' field must be a number"}), 400
 
-    return jsonify({'message': 'Spending added successfully', 'spending_id': spending.id}), 201
+        # Fetch category
+        category = Category.query.get(category_id)
+        if not category:
+            return jsonify({"error": "Category not found"}), 404
+
+        # Create a new spending entry
+        spending = Spending(
+            user_id=user_id,  # Use the logged-in user's ID
+            category_id=category.id,
+            amount=amount,
+            currency=data.get('currency', 'USD'),
+            description=data.get('description'),
+            date=datetime.strptime(
+                data.get('date', datetime.utcnow().strftime('%Y-%m-%d')), '%Y-%m-%d'
+            ),
+            payment_method=data.get('payment_method', 'Card'),
+        )
+        db.session.add(spending)
+        db.session.commit()
+
+        return jsonify({'message': 'Spending added successfully', 'spending_id': spending.id}), 201
+
+    except Exception as e:
+        print(f"Error in add_spending: {e}")
+        return jsonify({"error": "An internal error occurred"}), 500
 
 @spending_bp.route('/', methods=['GET'])
+@jwt_required()
 def get_spendings():
-    spendings = Spending.query.all()
+    user_id = get_jwt_identity()
+    spendings = Spending.query.filter_by(user_id=user_id).all()
     return jsonify([{
         'id': s.id,
         'user_id': s.user_id,
-        'category': s.category_id,
+        'category': Category.query.get(s.category_id).name if s.category_id else "Unknown",
         'amount': s.amount,
-        'currency' : s.currency,
+        'currency': s.currency,
         'description': s.description,
-        'date': s.date,
+        'date': s.date.strftime('%Y-%m-%d'),
         'payment_method': s.payment_method,
-        'account_id': s.account_id
     } for s in spendings]), 200
-
 
 # 
 # Analytics
@@ -75,10 +90,13 @@ def get_exchange_rates():
     """
     Fetches exchange rates from the API.
     """
-    response = requests.get(EXCHANGE_API_URL)
-    if response.status_code == 200:
+    try:
+        response = requests.get(EXCHANGE_API_URL)
+        response.raise_for_status()
         return response.json().get("rates", {})
-    return {}
+    except Exception as e:
+        print(f"Error fetching exchange rates: {e}")
+        return {}
 
 def calculate_total_spendings(parent_category_id, exchange_rates, base_currency="USD"):
     """
@@ -107,8 +125,10 @@ def calculate_total_spendings(parent_category_id, exchange_rates, base_currency=
 
     return total
 
-@spending_bp.route('/analytics', methods=['GET'])
+@spending_bp.route('/analytics/', methods=['GET'])
+@jwt_required()
 def get_spendings_analytics():
+    user_id = get_jwt_identity()
     start_date = request.args.get('start_date', '2000-01-01')
     end_date = request.args.get('end_date', datetime.utcnow().strftime('%Y-%m-%d'))
     base_currency = request.args.get('base_currency', 'USD')
