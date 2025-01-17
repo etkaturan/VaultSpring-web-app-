@@ -86,6 +86,7 @@ def get_spendings():
 # 
 # Analytics
 # 
+
 def get_exchange_rates():
     """
     Fetches exchange rates from the API.
@@ -98,11 +99,10 @@ def get_exchange_rates():
         print(f"Error fetching exchange rates: {e}")
         return {}
 
-def calculate_total_spendings(parent_category_id, exchange_rates, base_currency="USD"):
+def calculate_total_spendings(parent_category_id, user_id, start_date, end_date, exchange_rates, base_currency="USD"):
     """
     Calculates total spendings for a category, including subcategories, in the base currency.
     """
-    # Get all subcategories of the parent category
     def get_all_subcategories(category_id):
         subcategories = Category.query.filter_by(parent_id=category_id).all()
         result = [category_id]
@@ -111,19 +111,26 @@ def calculate_total_spendings(parent_category_id, exchange_rates, base_currency=
         return result
 
     category_ids = get_all_subcategories(parent_category_id)
+    print(f"Category IDs for parent {parent_category_id}: {category_ids}")
 
-    # Query spendings for these categories
+    # Query spendings with date filter
     spendings = db.session.query(
         Spending.amount, Spending.currency
-    ).filter(Spending.category_id.in_(category_ids)).all()
+    ).filter(
+        Spending.category_id.in_(category_ids),
+        Spending.user_id == user_id,
+        func.date(Spending.date).between(start_date, end_date)  # Extract date part
+    ).all()
+    print(f"Spendings for category {parent_category_id}, user {user_id}: {spendings}")
 
-    # Convert amounts to base currency
     total = 0.0
     for amount, currency in spendings:
-        rate = exchange_rates.get(currency, 1.0)  # Default to 1.0 if rate not found
+        rate = exchange_rates.get(currency, 1.0)
         total += amount / rate if currency != base_currency else amount
 
+    print(f"Total spent for category {parent_category_id}: {total}")
     return total
+
 
 @spending_bp.route('/analytics/', methods=['GET'])
 @jwt_required()
@@ -132,6 +139,13 @@ def get_spendings_analytics():
     start_date = request.args.get('start_date', '2000-01-01')
     end_date = request.args.get('end_date', datetime.utcnow().strftime('%Y-%m-%d'))
     base_currency = request.args.get('base_currency', 'USD')
+
+    try:
+        # Convert start_date and end_date to datetime
+        start_date = datetime.strptime(start_date, '%Y-%m-%d')
+        end_date = datetime.strptime(end_date, '%Y-%m-%d')
+    except ValueError:
+        return jsonify({'error': 'Invalid date format. Use YYYY-MM-DD.'}), 400
 
     # Fetch exchange rates
     exchange_rates = get_exchange_rates()
@@ -142,7 +156,14 @@ def get_spendings_analytics():
     # Calculate total spendings for each parent category
     analytics = []
     for category in parent_categories:
-        total_spent = calculate_total_spendings(category.id, exchange_rates, base_currency)
+        total_spent = calculate_total_spendings(
+            parent_category_id=category.id,
+            user_id=user_id,
+            start_date=start_date,
+            end_date=end_date,
+            exchange_rates=exchange_rates,
+            base_currency=base_currency
+        )
         analytics.append({
             'category': category.name,
             'total_spent': round(total_spent, 2),
